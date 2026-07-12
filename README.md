@@ -155,14 +155,47 @@ config.keys = {
     action = act.TogglePaneZoomState,
   },
 
-  -- Cmd+K to clear the screen and scrollback (Ctrl+L makes the shell redraw its prompt)
+  -- Cmd+K to clear the screen and scrollback (Ctrl+L makes the shell redraw its prompt).
+  -- Only safe when a plain shell owns the pane: TUIs (herdr, claude, vim) repaint
+  -- incrementally and get garbled if the viewport is wiped under them.
+  -- Inside Herdr, scrollback belongs to Herdr, not WezTerm, so we go through its
+  -- socket API instead: if the focused Herdr pane is an idle zsh prompt, stash any
+  -- half-typed input (esc q = zsh push-line, restored after), then run `clear`
+  -- (macOS clear emits ESC[3J, which Herdr honors by wiping that pane's history).
+  -- Focused Herdr panes running claude/vim/etc. are left untouched.
   {
     key = "k",
     mods = "CMD",
-    action = act.Multiple({
-      act.ClearScrollback("ScrollbackAndViewport"),
-      act.SendKey({ key = "L", mods = "CTRL" }),
-    }),
+    action = wezterm.action_callback(function(window, pane)
+      local shells = { zsh = true, bash = true, fish = true, sh = true, nu = true }
+      local proc = pane:get_foreground_process_name() or ""
+      local name = proc:match("([^/\\]+)$") or proc
+      if shells[name] and not pane:is_alt_screen_active() then
+        window:perform_action(
+          act.Multiple({
+            act.ClearScrollback("ScrollbackAndViewport"),
+            act.SendKey({ key = "L", mods = "CTRL" }),
+          }),
+          pane
+        )
+        return
+      end
+      if name == "herdr" then
+        local herdr = "/opt/homebrew/bin/herdr"
+        local ok, stdout = wezterm.run_child_process({ herdr, "pane", "process-info", "--current" })
+        if ok then
+          local parsed_ok, reply = pcall(wezterm.json_parse, stdout)
+          local info = parsed_ok and reply.result and reply.result.process_info
+          local fg = info and info.foreground_processes
+          if fg and #fg == 1 and fg[1].name == "zsh" then
+            wezterm.run_child_process({ herdr, "pane", "send-keys", info.pane_id, "esc", "q" })
+            wezterm.run_child_process({ herdr, "pane", "run", info.pane_id, "clear" })
+          end
+        end
+      end
+      -- Tidy WezTerm's own history without touching the viewport (safe under TUIs).
+      window:perform_action(act.ClearScrollback("ScrollbackOnly"), pane)
+    end),
   },
 }
 
@@ -181,7 +214,7 @@ return config
 | Resize pane (3 cells) | Cmd+Ctrl+Arrows |
 | Maximize / restore pane | Cmd+Shift+Enter |
 | Close pane (no confirm) | Cmd+W |
-| Clear screen + scrollback | Cmd+K |
+| Clear screen + scrollback (works at shell prompts, incl. inside Herdr panes via its socket API; no-op on TUIs like claude/vim) | Cmd+K |
 
 ## 5. Install Herdr (agent multiplexer)
 
