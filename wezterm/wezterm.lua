@@ -141,6 +141,103 @@ config.keys = {
       window:perform_action(act.ClearScrollback("ScrollbackOnly"), pane)
     end),
   },
+
+  -- Cmd+Shift+O to open a URL from the pane's recent output via a picker.
+  -- WezTerm regex-matches URLs on the physical rows it renders, so a long URL
+  -- that soft-wraps inside a Herdr pane reaches it as separate lines and
+  -- Shift+click opens a truncated link. Herdr still knows the logical line
+  -- structure, so for Herdr panes we fetch the focused pane's recent output
+  -- through its socket API with --source recent-unwrapped, which rejoins
+  -- wrapped lines; plain panes use WezTerm's own logical-line text. Matches
+  -- are listed newest-first in an InputSelector: Enter opens the top one,
+  -- / filters, Esc cancels.
+  {
+    key = "o",
+    mods = "CMD|SHIFT",
+    action = wezterm.action_callback(function(window, pane)
+      local text
+      local proc = pane:get_foreground_process_name() or ""
+      local name = proc:match("([^/\\]+)$") or proc
+      if name == "herdr" then
+        local herdr = "/opt/homebrew/bin/herdr"
+        local ok, stdout = wezterm.run_child_process({ herdr, "pane", "process-info", "--current" })
+        if ok then
+          local parsed_ok, reply = pcall(wezterm.json_parse, stdout)
+          local info = parsed_ok and reply.result and reply.result.process_info
+          if info and info.pane_id then
+            local read_ok, read_out = wezterm.run_child_process({
+              herdr, "pane", "read", info.pane_id,
+              "--source", "recent-unwrapped", "--lines", "200", "--format", "text",
+            })
+            if read_ok then
+              text = read_out
+            end
+          end
+        end
+      end
+      if not text then
+        text = pane:get_logical_lines_as_text(200)
+      end
+
+      -- Strip prose punctuation from the end of a match; drop a trailing ")"
+      -- only when it has no opening "(" inside the URL to pair with, so
+      -- wikipedia-style /Foo_(bar) URLs survive while "(see https://x)" drops
+      -- the closing paren.
+      local function trim_url(url)
+        while #url > 0 do
+          local tail = url:sub(-1)
+          if tail:match("[%.,;:!%]]") then
+            url = url:sub(1, -2)
+          elseif tail == ")" then
+            local _, opens = url:gsub("%(", "")
+            local _, closes = url:gsub("%)", "")
+            if closes > opens then
+              url = url:sub(1, -2)
+            else
+              break
+            end
+          else
+            break
+          end
+        end
+        return url
+      end
+
+      local matches = {}
+      for url in text:gmatch("https?://[%w%-%._~:/?#%[%]@!$&'()*+,;=%%]+") do
+        table.insert(matches, trim_url(url))
+      end
+      -- Newest first, deduped.
+      local urls, seen = {}, {}
+      for i = #matches, 1, -1 do
+        if not seen[matches[i]] then
+          seen[matches[i]] = true
+          table.insert(urls, matches[i])
+        end
+      end
+      if #urls == 0 then
+        window:toast_notification("WezTerm", "No URLs found in pane output", nil, 3000)
+        return
+      end
+
+      local choices = {}
+      for _, url in ipairs(urls) do
+        table.insert(choices, { label = url })
+      end
+      window:perform_action(
+        act.InputSelector({
+          title = "Open URL (newest first)",
+          choices = choices,
+          action = wezterm.action_callback(function(_, _, _, label)
+            if label then
+              wezterm.open_with(label)
+            end
+          end),
+        }),
+        pane
+      )
+    end),
+  },
 }
 
 -- Return the configuration to WezTerm
