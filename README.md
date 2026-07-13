@@ -2,7 +2,8 @@
 
 Reproduces the terminal setup from chen's Mac (July 2026): WezTerm nightly with
 Catppuccin Mocha, tmux-style leader-key pane shortcuts, frosted-glass
-transparency, and the Herdr agent multiplexer.
+transparency, the Herdr agent multiplexer, and the coding agents wired into it
+(Pi, Oh-my-Pi, Claude Code, Codex, OpenCode).
 
 ## 1. Prerequisites — Homebrew
 
@@ -321,11 +322,56 @@ brew install herdr
 - tmux-style prefix `Ctrl+B` (detach with `Ctrl+B q`); sessions survive closing
   the terminal
 - Sidebar shows which AI coding agents are waiting for input vs. working
+  (driven by the per-agent integrations — step 7)
 - `herdr status` / `herdr update` for health and self-updates
 - Zsh completions installed automatically
+- Config lives at `~/.config/herdr/config.toml`; this setup adds one setting:
+  `agent_panel_sort = "priority"` under `[ui]`
 - Docs: https://herdr.dev/docs/quick-start/
 
-## 6. Verify colors (optional, wide-gamut displays)
+## 6. Install the coding agents — Pi + Oh-my-Pi
+
+Pi is the primary coding agent; Oh-my-Pi (`omp`) is the batteries-included
+harness for it ("coding agent with the IDE wired in"), installed from its own
+tap:
+
+```sh
+# Pi coding agent (`pi` CLI) — needs Node: brew install node
+npm install -g @earendil-works/pi-coding-agent
+
+# Catppuccin theme for Pi's TUI, matching the WezTerm color scheme
+pi install npm:pi-catppuccin-tui
+
+# Oh-my-Pi (`omp` CLI) — https://omp.sh
+brew install can1357/tap/omp
+```
+
+- `pi list` shows installed extensions; `pi update --all` updates Pi plus
+  extensions; `omp` updates via `brew upgrade omp`
+- Claude Code, Codex, and OpenCode are also on this machine (installed via
+  their own installers) — set them up before step 7 if you want them in Herdr
+
+## 7. Wire the agents into Herdr (integrations)
+
+Herdr's sidebar state (waiting vs. working) comes from a per-agent hook
+installed by `herdr integration install`. Each agent must be installed first.
+This machine has five wired up:
+
+```sh
+herdr integration install pi
+herdr integration install omp
+herdr integration install claude
+herdr integration install codex
+herdr integration install opencode
+```
+
+Verify with `herdr integration status` — each installed agent should read
+`current`. The hooks live inside each agent's own config dir (e.g.
+`~/.pi/agent/extensions/`, `~/.claude/hooks/`), so if an agent shows
+`outdated` after an update — or you reinstall an agent from scratch — re-run
+its `herdr integration install` command.
+
+## 8. Verify colors (optional, wide-gamut displays)
 
 Run:
 
