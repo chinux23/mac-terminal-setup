@@ -10,14 +10,27 @@ config.color_scheme = "Catppuccin Mocha"
 
 -- Font Settings
 -- Using the newly installed 'JetBrainsMono Nerd Font Mono' with Medium weight
-config.font = wezterm.font("JetBrainsMono Nerd Font Mono", { weight = "Medium" })
+config.font = wezterm.font("JetBrainsMono Nerd Font Mono", { weight = "DemiBold" })
 config.font_size = 12.0
 
 -- Appearance
-config.enable_tab_bar = false             -- Hide tab bar for a clean, tab-free look
+config.enable_tab_bar = true              -- Show tab bar for tabs + workspace visibility
+config.tab_bar_at_bottom = true           -- Position tab bar at bottom (tmux style)
+config.use_fancy_tab_bar = false          -- Flat retro-style tab bar (matches the theme)
+config.hide_tab_bar_if_only_one_tab = false -- Always show so workspace name is visible
 config.window_decorations = "RESIZE"     -- Borderless window but preserves resize borders
 config.window_background_opacity = 0.9    -- 90% opacity for slight transparency
 config.macos_window_background_blur = 20  -- Enable frosted-glass background blur on macOS
+
+-- Show the active workspace name on the right side of the tab bar
+wezterm.on("update-right-status", function(window, pane)
+  local workspace = window:active_workspace()
+  window:set_right_status(wezterm.format({
+    { Attribute = { Intensity = "Bold" } },
+    { Foreground = { Color = "#cba6f7" } },  -- Catppuccin Mocha mauve
+    { Text = "  " .. workspace .. "  " },
+  }))
+end)
 
 -- Multiplexer & Session Management (replacing tmux)
 -- Set Leader key to Ctrl + a (standard tmux behavior)
@@ -35,6 +48,18 @@ config.keys = {
   -- Leader + - for vertical split (top and bottom)
   {
     key = "-",
+    mods = "LEADER",
+    action = act.SplitVertical({ domain = "CurrentPaneDomain" }),
+  },
+  -- Leader + v for vertical split (side by side, Vim-style)
+  {
+    key = "v",
+    mods = "LEADER",
+    action = act.SplitHorizontal({ domain = "CurrentPaneDomain" }),
+  },
+  -- Leader + s for horizontal split (top and bottom, Vim-style)
+  {
+    key = "s",
     mods = "LEADER",
     action = act.SplitVertical({ domain = "CurrentPaneDomain" }),
   },
@@ -99,46 +124,20 @@ config.keys = {
     action = act.CloseCurrentPane({ confirm = false }),
   },
 
-  -- Cmd+K to clear the screen and scrollback (Ctrl+L makes the shell redraw its prompt).
-  -- Only safe when a plain shell owns the pane: TUIs (herdr, claude, vim) repaint
-  -- incrementally and get garbled if the viewport is wiped under them.
-  -- Inside Herdr, scrollback belongs to Herdr, not WezTerm, so we go through its
-  -- socket API instead: if the focused Herdr pane is an idle zsh prompt, stash any
-  -- half-typed input (esc q = zsh push-line, restored after), then run `clear`
-  -- (macOS clear emits ESC[3J, which Herdr honors by wiping that pane's history).
-  -- Focused Herdr panes running claude/vim/etc. are left untouched.
+  -- Cmd+K to clear the screen.
+  -- In a plain shell: clear WezTerm's scrollback and viewport.
+  -- In a TUI/multiplexer (herdr, tmux): don't touch WezTerm's viewport
+  -- (it's the app's canvas); instead send Ctrl+L which the multiplexer
+  -- forwards to the active pane's shell only.
   {
     key = "k",
     mods = "CMD",
     action = wezterm.action_callback(function(window, pane)
-      local shells = { zsh = true, bash = true, fish = true, sh = true, nu = true }
-      local proc = pane:get_foreground_process_name() or ""
-      local name = proc:match("([^/\\]+)$") or proc
-      if shells[name] and not pane:is_alt_screen_active() then
-        window:perform_action(
-          act.Multiple({
-            act.ClearScrollback("ScrollbackAndViewport"),
-            act.SendKey({ key = "L", mods = "CTRL" }),
-          }),
-          pane
-        )
-        return
+      if pane:is_alt_screen_active() then
+        window:perform_action(act.SendKey({ key = "L", mods = "CTRL" }), pane)
+      else
+        window:perform_action(act.ClearScrollback("ScrollbackAndViewport"), pane)
       end
-      if name == "herdr" then
-        local herdr = "/opt/homebrew/bin/herdr"
-        local ok, stdout = wezterm.run_child_process({ herdr, "pane", "process-info", "--current" })
-        if ok then
-          local parsed_ok, reply = pcall(wezterm.json_parse, stdout)
-          local info = parsed_ok and reply.result and reply.result.process_info
-          local fg = info and info.foreground_processes
-          if fg and #fg == 1 and fg[1].name == "zsh" then
-            wezterm.run_child_process({ herdr, "pane", "send-keys", info.pane_id, "esc", "q" })
-            wezterm.run_child_process({ herdr, "pane", "run", info.pane_id, "clear" })
-          end
-        end
-      end
-      -- Tidy WezTerm's own history without touching the viewport (safe under TUIs).
-      window:perform_action(act.ClearScrollback("ScrollbackOnly"), pane)
     end),
   },
 
@@ -163,7 +162,7 @@ config.keys = {
         local ok, stdout = wezterm.run_child_process({ herdr, "pane", "process-info", "--current" })
         if ok then
           local parsed_ok, reply = pcall(wezterm.json_parse, stdout)
-          local info = parsed_ok and reply.result and reply.result.process_info
+          local info = parsed_ok and reply.result and reply.process_info
           if info and info.pane_id then
             local read_ok, read_out = wezterm.run_child_process({
               herdr, "pane", "read", info.pane_id,
@@ -238,7 +237,67 @@ config.keys = {
       )
     end),
   },
+  -- Workspace Management
+  -- Leader + w to fuzzy-pick or create a workspace
+  {
+    key = "w",
+    mods = "LEADER",
+    action = act.ShowLauncherArgs({ flags = "FUZZY|WORKSPACES" }),
+  },
+  -- Leader + n to create a new named workspace (prompts for a name)
+  {
+    key = "n",
+    mods = "LEADER",
+    action = act.PromptInputLine({
+      description = wezterm.format({
+        { Attribute = { Intensity = "Bold" } },
+        { Text = "Enter name for new workspace:" },
+      }),
+      action = wezterm.action_callback(function(window, pane, line)
+        if line then
+          window:perform_action(
+            act.SwitchToWorkspace({ name = line }),
+            pane
+          )
+        end
+      end),
+    }),
+  },
+  -- Leader + ] to switch to next workspace
+  {
+    key = "]",
+    mods = "LEADER",
+    action = act.SwitchWorkspaceRelative(1),
+  },
+  -- Leader + [ to switch to previous workspace
+  {
+    key = "[",
+    mods = "LEADER",
+    action = act.SwitchWorkspaceRelative(-1),
+  },
 }
+
+-- Hyperlink Rules
+-- Setting hyperlink_rules replaces the defaults, so we re-include them here.
+config.hyperlink_rules = wezterm.default_hyperlink_rules()
+
+-- cl/NUMBER → Google Critique
+table.insert(config.hyperlink_rules, {
+  regex = [[\bcl/(\d+)\b]],
+  format = "https://critique.corp.google.com/cl/$1",
+})
+
+-- b/NUMBER → Google Buganizer
+table.insert(config.hyperlink_rules, {
+  regex = [[\bb/(\d+)\b]],
+  format = "https://b.corp.google.com/$1",
+})
+
+-- go/LINK → Google go links
+table.insert(config.hyperlink_rules, {
+  regex = [[\bgo/([\w][\w/\-]*)]], 
+  format = "https://goto.corp.google.com/$1",
+})
 
 -- Return the configuration to WezTerm
 return config
