@@ -245,6 +245,24 @@ config.keys = {
       )
     end),
   },
+
+  -- Tab Management
+  -- Leader + , to rename the active tab (matches tmux convention)
+  {
+    key = ",",
+    mods = "LEADER",
+    action = act.PromptInputLine({
+      description = wezterm.format({
+        { Attribute = { Intensity = "Bold" } },
+        { Text = "Enter new tab name:" },
+      }),
+      action = wezterm.action_callback(function(window, pane, line)
+        if line then
+          window:active_tab():set_title(line)
+        end
+      end),
+    }),
+  },
 }
 
 -- Return the configuration to WezTerm
