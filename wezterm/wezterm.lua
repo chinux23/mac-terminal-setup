@@ -135,10 +135,17 @@ config.keys = {
             wezterm.run_child_process({ herdr, "pane", "send-keys", info.pane_id, "esc", "q" })
             wezterm.run_child_process({ herdr, "pane", "run", info.pane_id, "clear" })
           end
+          -- Tidy WezTerm's own history without touching the viewport (safe under TUIs).
+          window:perform_action(act.ClearScrollback("ScrollbackOnly"), pane)
+        else
+          -- Remote herdr (--remote): no local server, so socket API failed.
+          -- Send Ctrl+L and let herdr forward it to the remote pane's shell.
+          window:perform_action(act.SendKey({ key = "L", mods = "CTRL" }), pane)
         end
+      else
+        -- Other TUIs: tidy WezTerm's own history without touching the viewport.
+        window:perform_action(act.ClearScrollback("ScrollbackOnly"), pane)
       end
-      -- Tidy WezTerm's own history without touching the viewport (safe under TUIs).
-      window:perform_action(act.ClearScrollback("ScrollbackOnly"), pane)
     end),
   },
 
