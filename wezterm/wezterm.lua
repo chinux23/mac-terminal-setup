@@ -18,6 +18,7 @@ config.enable_tab_bar = false             -- Hide tab bar for a clean, tab-free 
 config.window_decorations = "RESIZE"     -- Borderless window but preserves resize borders
 config.window_background_opacity = 0.9    -- 90% opacity for slight transparency
 config.macos_window_background_blur = 20  -- Enable frosted-glass background blur on macOS
+config.native_macos_fullscreen_mode = true -- Use native macOS fullscreen (creates a new Space)
 
 -- Multiplexer & Session Management (replacing tmux)
 -- Set Leader key to Ctrl + a (standard tmux behavior)
